@@ -1,0 +1,17 @@
+ultralytics
+segmentation-models-pytorch
+albumentations
+opencv-python
+numpy
+pandas
+pyyaml
+tqdm
+pillow
+matplotlib
+scikit-learn
+streamlit
+pytest
+ruff
+tensorboard
+cityscapesscripts 
+kagglehub

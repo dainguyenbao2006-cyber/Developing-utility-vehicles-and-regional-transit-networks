@@ -218,3 +218,37 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ==========================================================
+# ADAS-Vision Project Specific (Datasets, Weights, Outputs)
+# ==========================================================
+
+# Datasets & Archives
+data/bdd100k/
+data/cityscapes/
+data/raw/
+data/processed/
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Model Weights & Checkpoints
+weights/*.pt
+weights/*.pth
+weights/*.onnx
+weights/*.engine
+*.ckpt
+
+# Training Runs, Logs & Outputs
+outputs/
+runs/
+logs/
+tensorboard_logs/
+
+# Large Media / Demo Videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+
