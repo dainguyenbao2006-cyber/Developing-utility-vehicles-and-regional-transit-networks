@@ -1,0 +1,48 @@
+ldw:
+  camera_offset_ratio: 0.0
+  wheel_half_width_ratio: 0.14
+  wheel_y_ratio: 0.90
+  roi_radius_px: 12
+  lane_overlap_thresh: 0.25
+  drivable_min_ratio: 0.50
+  frames_to_trigger: 3
+  frames_to_clear: 5
+
+fcw:
+  target_classes: ["car", "truck", "bus", "motorcycle"]
+  min_confidence: 0.35
+  camera_offset_ratio: 0.0
+  corridor_top_y_ratio: 0.45
+  corridor_bot_y_ratio: 0.95
+  corridor_top_half_w_ratio: 0.08
+  corridor_bot_half_w_ratio: 0.32
+  use_drivable_mask: false
+  drivable_min_ratio: 0.20
+  history_len: 8
+  lookback_steps: 3
+  min_dt_sec: 0.001
+  growth_thresh: 0.08
+  critical_growth_thresh: 0.20
+  warning_area_thresh: 0.06
+  critical_area_thresh: 0.14
+  match_max_dist_ratio: 0.12
+
+pcw:
+  target_classes: ["pedestrian", "rider", "bicycle"]
+  min_confidence: 0.35
+  camera_offset_ratio: 0.0
+  roi_top_y_ratio: 0.40
+  roi_bot_y_ratio: 0.96
+  corridor_top_half_w_ratio: 0.14
+  corridor_bot_half_w_ratio: 0.38
+  use_drivable_mask: true
+  drivable_expand_px: 24
+  overlap_thresh: 0.20
+  warning_height_ratio: 0.12
+  critical_height_ratio: 0.25
+  critical_area_ratio: 0.045
+
+alert_manager:
+  cooldown_sec: 1.0
+  escalate_on_severity_up: true
+  priority_order: ["FCW", "PCW", "LDW_LEFT", "LDW_RIGHT"]
