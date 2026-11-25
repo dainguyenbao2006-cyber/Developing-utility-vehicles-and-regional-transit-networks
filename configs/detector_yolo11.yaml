@@ -1,0 +1,16 @@
+model:
+  architecture: "yolo11s.pt"
+  img_size: 640
+  conf_threshold: 0.35
+  iou_threshold: 0.45
+
+train:
+  epochs: 50
+  batch_size: 16
+  optimizer: "AdamW"
+  lr0: 0.001
+  workers: 4
+  amp: true
+  close_mosaic: 10
+  fliplr: 0.5
+  flipud: 0.0

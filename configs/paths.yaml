@@ -1,0 +1,12 @@
+project:
+  name: "adas-vision"
+  seed: 42
+  device: "cuda"
+
+paths:
+  bdd_root: "D:/datasets/bdd100k"
+  cityscapes_root: "D:/datasets/cityscapes"
+  splits_dir: "data/splits"
+  detector_weights: "weights/detector_best.pt"
+  segmenter_weights: "weights/segmenter_best.pt"
+  output_dir: "outputs"

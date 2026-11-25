@@ -1,0 +1,33 @@
+adas:
+  ldw:
+    camera_offset_ratio: 0.0
+    ego_y_ratio: 0.88
+    wheel_strip_height_ratio: 0.03
+    wheel_half_width_ratio: 0.12
+    lane_overlap_threshold: 0.15
+    min_direct_coverage: 0.35
+    hysteresis_frames: 3
+
+  fcw:
+    target_classes: ["car", "truck", "bus", "motorcycle"]
+    corridor_top_width_ratio: 0.18
+    corridor_bottom_width_ratio: 0.45
+    corridor_top_y_ratio: 0.45
+    caution_area_ratio: 0.04
+    critical_area_ratio: 0.10
+    growth_rate_critical: 0.25
+    history_window: 5
+    match_iou_threshold: 0.30
+
+  pcw:
+    target_classes: ["pedestrian", "rider", "bicycle"]
+    danger_y_min_ratio: 0.50
+    in_lane_iou_threshold: 0.10
+
+  tsr:
+    target_classes: ["traffic_light", "traffic_sign"]
+    min_confidence: 0.45
+    min_box_area_ratio: 0.0004
+
+  alert_manager:
+    cooldown_sec: 1.0
