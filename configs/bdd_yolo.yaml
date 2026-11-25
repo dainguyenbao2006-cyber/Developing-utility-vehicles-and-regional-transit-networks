@@ -1,0 +1,15 @@
+# Ultralytics YOLO11 dataset config for BDD100K (9 classes matching DET_CLASSES)
+path: "data/bdd100k_yolo"
+train: "images/train"
+val: "images/val"
+
+names:
+  0: car
+  1: truck
+  2: bus
+  3: motorcycle
+  4: bicycle
+  5: pedestrian
+  6: rider
+  7: traffic_light
+  8: traffic_sign

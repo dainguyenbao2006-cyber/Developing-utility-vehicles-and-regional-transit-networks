@@ -1,0 +1,38 @@
+model:
+  architecture: "yolo11s.pt"
+  img_size: 640
+  conf_threshold: 0.35
+  iou_threshold: 0.45
+
+train:
+  epochs: 50
+  batch_size: 16
+  optimizer: "AdamW"
+  lr0: 0.001
+  workers: 4
+  amp: true
+  cos_lr: true
+  warmup_epochs: 3
+  mosaic: 1.0
+  close_mosaic: 10
+  fliplr: 0.5
+  flipud: 0.0
+  copy_paste: 0.1
+  seed: 42
+  project: "runs/detect"
+  name: "yolo11s_bdd"
+
+benchmark:
+  models:
+    - "yolo11n.pt"
+    - "yolo11s.pt"
+    - "yolov8s.pt"
+  img_size: 640
+  batch_size: 16
+  latency_warmup: 10
+  latency_iters: 50
+  rare_classes:
+    - "motorcycle"
+    - "bicycle"
+    - "traffic_sign"
+  rare_oversample_factor: 2
