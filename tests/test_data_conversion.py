@@ -27,6 +27,7 @@ from data.transforms import (
     preprocess_for_segmentation,
 )
 from scripts.inspect_bdd import run_inspection
+from scripts.prepare_data import prepare_dataset_splits
 from utils.constants import DET_CLASS_TO_ID, SEG_CHANNELS
 
 
@@ -233,3 +234,62 @@ def test_rasterize_bdd_frame_seg_masks_from_poly2d() -> None:
     assert encoded[0, 60, 40] == 1  # direct lane inside polygon
     assert encoded[1, 60, 10] == 1  # alternative lane inside polygon
     assert encoded[2, 60, 19] == 1  # Bezier lane curve rasterized
+
+
+def test_prepare_dataset_splits_kaggle_nested_layout_into_writable_workdir(
+    tmp_path: Path,
+) -> None:
+    # Simulate read-only Kaggle layout with nested trainA subfolder + bdd100k_labels_release
+    kaggle_root = tmp_path / "kaggle_input" / "solesensei_bdd100k"
+    train_a = kaggle_root / "bdd100k" / "bdd100k" / "images" / "100k" / "train" / "trainA"
+    val_dir = kaggle_root / "bdd100k" / "bdd100k" / "images" / "100k" / "val"
+    lbl_dir = kaggle_root / "bdd100k_labels_release" / "bdd100k" / "labels"
+    for d in (train_a, val_dir, lbl_dir):
+        d.mkdir(parents=True)
+
+    dummy_img = np.zeros((72, 128, 3), dtype=np.uint8)
+    cv2.imwrite(str(train_a / "tr_01.jpg"), dummy_img)
+    cv2.imwrite(str(val_dir / "va_01.jpg"), dummy_img)
+
+    train_json = [
+        {
+            "name": "tr_01.jpg",
+            "labels": [
+                {"category": "car", "box2d": {"x1": 10, "y1": 10, "x2": 50, "y2": 40}},
+                {
+                    "category": "drivable area",
+                    "attributes": {"areaType": "direct"},
+                    "poly2d": [
+                        {"vertices": [[20, 40], [100, 40], [100, 70], [20, 70]], "closed": True}
+                    ],
+                },
+            ],
+        }
+    ]
+    val_json = [
+        {
+            "name": "va_01.jpg",
+            "labels": [{"category": "person", "box2d": {"x1": 5, "y1": 5, "x2": 25, "y2": 60}}],
+        }
+    ]
+    (lbl_dir / "bdd100k_labels_images_train.json").write_text(
+        json.dumps(train_json), encoding="utf-8"
+    )
+    (lbl_dir / "bdd100k_labels_images_val.json").write_text(json.dumps(val_json), encoding="utf-8")
+
+    work_dir = tmp_path / "writable_work"
+    splits_dir = tmp_path / "splits"
+    yolo_yaml = tmp_path / "bdd_yolo.yaml"
+
+    summary = prepare_dataset_splits(
+        bdd_root=kaggle_root,
+        work_dir=work_dir,
+        splits_dir=splits_dir,
+        yolo_yaml_path=yolo_yaml,
+        seed=42,
+    )
+    assert summary["train"]["total_discovered"] == 1
+    assert (work_dir / "yolo" / "labels" / "train" / "tr_01.txt").exists()
+    assert (work_dir / "seg_masks" / "drivable" / "train" / "tr_01.png").exists()
+    assert (work_dir / "seg_masks" / "lane" / "train" / "tr_01.png").exists()
+    assert yolo_yaml.exists()

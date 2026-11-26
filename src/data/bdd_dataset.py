@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -23,17 +24,26 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 def resolve_bdd_seg_dirs(
     bdd_root: Path,
     split: str,
+    work_dir: Path | None = None,
 ) -> tuple[Path, Path | None, Path | None]:
     """Auto-resolve BDD100K image, drivable mask, and lane mask directories across layouts."""
+    resolved_work = (
+        Path(work_dir)
+        if work_dir is not None
+        else Path(os.environ.get("BDD_WORK_DIR", "data/bdd_prepared"))
+    )
+
     img_candidates = [
+        resolved_work / "yolo" / "images" / split,
         bdd_root / "images" / "100k" / split,
         bdd_root / "bdd100k" / "images" / "100k" / split,
         bdd_root / "bdd100k" / "bdd100k" / "images" / "100k" / split,
         bdd_root / "bdd100k_images_100k" / "bdd100k" / "images" / "100k" / split,
     ]
-    img_dir = next((p for p in img_candidates if p.exists()), img_candidates[0])
+    img_dir = next((p for p in img_candidates if p.exists()), img_candidates[1])
 
     drv_candidates = [
+        resolved_work / "seg_masks" / "drivable" / split,
         bdd_root / "labels" / "drivable" / "masks" / split,
         bdd_root / "drivable_maps" / "labels" / split,
         bdd_root / "bdd100k" / "labels" / "drivable" / "masks" / split,
@@ -42,6 +52,7 @@ def resolve_bdd_seg_dirs(
     drv_dir = next((p for p in drv_candidates if p.exists()), None)
 
     lane_candidates = [
+        resolved_work / "seg_masks" / "lane" / split,
         bdd_root / "labels" / "lane" / "masks" / split,
         bdd_root / "lane" / "labels" / split,
         bdd_root / "labels" / "lane" / "colormaps" / split,
@@ -78,20 +89,23 @@ class BDDSegmentationDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         if self.drivable_dir is None and self.lane_dir is None:
             raise ValueError("At least one of drivable_dir or lane_dir must be provided.")
 
+        # Index all images recursively (handles nested subfolders like trainA/trainB on Kaggle)
+        image_index: dict[str, Path] = {}
+        if self.images_dir.exists():
+            for p in sorted(self.images_dir.rglob("*")):
+                if (p.is_file() or p.is_symlink()) and p.suffix.lower() in IMAGE_EXTS:
+                    image_index.setdefault(p.stem, p)
+
         if stems is not None:
             target_stems = list(stems)
         elif split_file is not None:
             target_stems = read_split_file(Path(split_file))
         else:
-            target_stems = sorted(
-                p.stem
-                for p in self.images_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in IMAGE_EXTS
-            )
+            target_stems = sorted(image_index.keys())
 
         self.samples: list[tuple[Path, Path | None, Path | None]] = []
         for stem in target_stems:
-            img_path = self._resolve_image(stem)
+            img_path = image_index.get(stem)
             if img_path is None:
                 continue
             drv_path = self._resolve_mask(self.drivable_dir, stem)

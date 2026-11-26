@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
-from collections.abc import Sequence
+import shutil
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -70,22 +72,43 @@ def _extract_bdd_frames(data: Any) -> list[dict[str, Any]]:
     raise ValueError("Unsupported BDD100K JSON format: expected list or dict['frames'].")
 
 
+def link_or_copy_file(src: Path, dst: Path) -> None:
+    """Create a symlink if supported, falling back to hardlink or file copy (Windows-safe)."""
+    if dst.exists() or dst.is_symlink():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(src.resolve(), dst)
+        return
+    except OSError:
+        pass
+    try:
+        os.link(src.resolve(), dst)
+        return
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def convert_bdd_json_to_yolo_dir(
     json_path: Path,
     images_dir: Path,
     labels_out_dir: Path,
     allowed_stems: set[str] | None = None,
     default_size_wh: tuple[int, int] = (1280, 720),
+    stem_to_image: Mapping[str, Path] | None = None,
+    preloaded_frames: list[dict[str, Any]] | None = None,
+    fixed_size_wh: tuple[int, int] | None = None,
 ) -> dict[str, int]:
     """Convert a BDD100K detection JSON file into per-image YOLO .txt label files."""
-    if not json_path.exists():
-        raise FileNotFoundError(f"BDD100K detection JSON not found: {json_path}")
-
     labels_out_dir.mkdir(parents=True, exist_ok=True)
-    with json_path.open("r", encoding="utf-8") as handle:
-        raw_data = json.load(handle)
+    if preloaded_frames is not None:
+        frames = preloaded_frames
+    else:
+        if not json_path.exists():
+            raise FileNotFoundError(f"BDD100K detection JSON not found: {json_path}")
+        with json_path.open("r", encoding="utf-8") as handle:
+            frames = _extract_bdd_frames(json.load(handle))
 
-    frames = _extract_bdd_frames(raw_data)
     stats = {"frames_written": 0, "boxes_written": 0, "skipped_missing_images": 0}
 
     for frame in frames:
@@ -99,14 +122,20 @@ def convert_bdd_json_to_yolo_dir(
         if allowed_stems is not None and stem not in allowed_stems:
             continue
 
-        img_path = images_dir / image_name
-        if img_path.exists():
+        img_path = (
+            stem_to_image.get(stem) if stem_to_image is not None else (images_dir / image_name)
+        )
+        if fixed_size_wh is not None:
+            if img_path is None or (images_dir.exists() and not img_path.exists()):
+                stats["skipped_missing_images"] += 1
+                continue
+            img_w, img_h = fixed_size_wh
+        elif img_path is not None and img_path.exists():
             with Image.open(img_path) as img:
                 img_w, img_h = img.size
         elif not images_dir.exists():
             img_w, img_h = default_size_wh
         else:
-            # Skip frames whose image file is not present in images_dir.
             stats["skipped_missing_images"] += 1
             continue
 
@@ -321,16 +350,20 @@ def rasterize_bdd_json_seg_to_dirs(
     lane_out_dir: Path,
     allowed_stems: set[str] | None = None,
     default_size_wh: tuple[int, int] = (1280, 720),
+    preloaded_frames: list[dict[str, Any]] | None = None,
+    fixed_size_wh: tuple[int, int] | None = None,
 ) -> dict[str, int]:
     """Generate PNG drivable and lane masks from BDD100K JSON poly2d annotations."""
-    if not json_path.exists():
-        raise FileNotFoundError(f"BDD100K JSON not found: {json_path}")
-
     drivable_out_dir.mkdir(parents=True, exist_ok=True)
     lane_out_dir.mkdir(parents=True, exist_ok=True)
 
-    with json_path.open("r", encoding="utf-8") as handle:
-        frames = _extract_bdd_frames(json.load(handle))
+    if preloaded_frames is not None:
+        frames = preloaded_frames
+    else:
+        if not json_path.exists():
+            raise FileNotFoundError(f"BDD100K JSON not found: {json_path}")
+        with json_path.open("r", encoding="utf-8") as handle:
+            frames = _extract_bdd_frames(json.load(handle))
 
     written = 0
     for frame in frames:
@@ -350,12 +383,15 @@ def rasterize_bdd_json_seg_to_dirs(
             written += 1
             continue
 
-        img_path = images_dir / image_name
-        if img_path.exists():
-            with Image.open(img_path) as img:
-                img_w, img_h = img.size
+        if fixed_size_wh is not None:
+            img_w, img_h = fixed_size_wh
         else:
-            img_w, img_h = default_size_wh
+            img_path = images_dir / image_name
+            if img_path.exists():
+                with Image.open(img_path) as img:
+                    img_w, img_h = img.size
+            else:
+                img_w, img_h = default_size_wh
 
         drv_mask, ln_mask = rasterize_bdd_frame_seg_masks(
             labels=frame.get("labels") or [],

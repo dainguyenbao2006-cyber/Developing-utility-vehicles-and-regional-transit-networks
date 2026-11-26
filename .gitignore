@@ -225,6 +225,8 @@ __marimo__/
 
 # Datasets & Archives
 data/bdd100k/
+data/bdd_prepared/
+data/bdd100k_yolo/
 data/cityscapes/
 data/raw/
 data/processed/
