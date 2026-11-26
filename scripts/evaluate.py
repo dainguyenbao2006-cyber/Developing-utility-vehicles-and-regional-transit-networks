@@ -17,7 +17,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from adas.alert_manager import ADASAnalyzer  # noqa: E402
-from data.bdd_dataset import BDDSegmentationDataset  # noqa: E402
+from data.bdd_dataset import BDDSegmentationDataset, resolve_bdd_seg_dirs  # noqa: E402
 from data.cityscapes_dataset import CityscapesRoadDataset  # noqa: E402
 from data.transforms import get_seg_val_transforms  # noqa: E402
 from evaluation import (  # noqa: E402
@@ -138,16 +138,16 @@ def main() -> None:
 
     # 2. BDD100K Segmentation evaluation
     if args.mode in {"all", "segmentation"}:
-        val_imgs = bdd_root / "images" / "100k" / "val"
-        drv_val = bdd_root / "drivable_maps" / "labels" / "val"
-        lane_val = bdd_root / "lane" / "labels" / "val"
+        val_imgs, drv_val, lane_val = resolve_bdd_seg_dirs(bdd_root, "val")
+        val_split_file = Path(cfg.paths.splits_dir) / "val.txt"
         if segmenter is not None and val_imgs.exists():
             bdd_ds = BDDSegmentationDataset(
                 images_dir=val_imgs,
-                drivable_dir=drv_val if drv_val.exists() else None,
-                lane_dir=lane_val if lane_val.exists() else None,
+                drivable_dir=drv_val,
+                lane_dir=lane_val,
                 size_hw=segmenter.size_hw,
                 transform=get_seg_val_transforms(segmenter.size_hw),
+                split_file=val_split_file if val_split_file.exists() else None,
             )
             bdd_loader = DataLoader(bdd_ds, batch_size=args.batch_size, shuffle=False)
             report["segmentation_bdd"] = evaluate_segmenter_bdd_loader(

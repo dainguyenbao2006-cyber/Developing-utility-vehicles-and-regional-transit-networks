@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import segmentation_models_pytorch as smp
 import torch
 from torch.utils.data import DataLoader
@@ -19,13 +18,10 @@ _SRC_DIR = _PROJECT_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from data.bdd_dataset import BDDSegmentationDataset  # noqa: E402
+from data.bdd_dataset import BDDSegmentationDataset, resolve_bdd_seg_dirs  # noqa: E402
 from data.transforms import get_seg_train_transforms, get_seg_val_transforms  # noqa: E402
-from models.segmenter import (  # noqa: E402
-    ComboLoss,
-    compute_channel_ious,
-    save_segmenter_checkpoint,
-)
+from evaluation import evaluate_segmenter_bdd_loader  # noqa: E402
+from models.segmenter import ComboLoss, save_segmenter_checkpoint  # noqa: E402
 from utils.config import load_project_configs  # noqa: E402
 from utils.constants import SEG_CHANNELS  # noqa: E402
 
@@ -44,6 +40,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--lr", type=float, default=None, help="Learning rate (overrides config).")
     parser.add_argument("--device", type=str, default=None, help="Device to use ('cuda' or 'cpu').")
+    parser.add_argument(
+        "--direct-id", type=int, default=0, help="Pixel value for drivable_direct (default: 0)."
+    )
+    parser.add_argument(
+        "--alt-id", type=int, default=1, help="Pixel value for drivable_alternative (default: 1)."
+    )
+    parser.add_argument(
+        "--lane-bg-id",
+        type=int,
+        default=255,
+        help="Background pixel value in lane mask (default: 255).",
+    )
     parser.add_argument(
         "--output-weights",
         type=Path,
@@ -110,37 +118,28 @@ def validate_epoch(
     device: torch.device,
     thresholds: tuple[float, float, float] | list[float],
 ) -> tuple[float, dict[str, float]]:
-    """Evaluate model on validation loader and compute loss and channel IoUs."""
+    """Streaming validation computing average loss and per-channel IoU in O(1) memory."""
     model.eval()
     running_loss = 0.0
     count = 0
-    all_probs: list[np.ndarray] = []
-    all_targets: list[np.ndarray] = []
 
     with torch.inference_mode():
         for images, masks in loader:
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
-
             logits = model(images)
             loss = criterion(logits, masks)
-
             batch_size = images.size(0)
             running_loss += float(loss.item()) * batch_size
             count += batch_size
 
-            probs = torch.sigmoid(logits).cpu().numpy()
-            targets_np = masks.cpu().numpy()
-            all_probs.append(probs)
-            all_targets.append(targets_np)
-
     val_loss = running_loss / max(1, count)
-    if not all_probs:
-        return val_loss, {"mean_iou": 0.0}
-
-    cat_probs = np.concatenate(all_probs, axis=0)
-    cat_targets = np.concatenate(all_targets, axis=0)
-    metrics = compute_channel_ious(cat_probs, cat_targets, thresholds=thresholds)
+    metrics = evaluate_segmenter_bdd_loader(
+        model=model,
+        loader=loader,
+        device=device,
+        thresholds=thresholds,
+    )
     return val_loss, metrics
 
 
@@ -161,14 +160,11 @@ def run_training() -> None:
     batch_size = args.batch_size if args.batch_size is not None else int(seg_cfg.train.batch_size)
     lr = args.lr if args.lr is not None else float(seg_cfg.train.lr)
     output_weights = args.output_weights or Path(cfg.paths.segmenter_weights)
+    splits_dir = Path(cfg.paths.splits_dir)
 
     bdd_root = args.bdd_root if args.bdd_root is not None else Path(cfg.paths.bdd_root)
-    images_train = bdd_root / "images" / "100k" / "train"
-    images_val = bdd_root / "images" / "100k" / "val"
-    drv_train = bdd_root / "drivable_maps" / "labels" / "train"
-    drv_val = bdd_root / "drivable_maps" / "labels" / "val"
-    lane_train = bdd_root / "lane" / "labels" / "train"
-    lane_val = bdd_root / "lane" / "labels" / "val"
+    images_train, drv_train, lane_train = resolve_bdd_seg_dirs(bdd_root, "train")
+    images_val, drv_val, lane_val = resolve_bdd_seg_dirs(bdd_root, "val")
 
     if not images_train.exists():
         logger.error(
@@ -178,27 +174,54 @@ def run_training() -> None:
         )
         return
 
+    train_split_file = splits_dir / "train.txt"
+    val_split_file = splits_dir / "val.txt"
+
     train_ds = BDDSegmentationDataset(
         images_dir=images_train,
-        drivable_dir=drv_train if drv_train.exists() else None,
-        lane_dir=lane_train if lane_train.exists() else None,
+        drivable_dir=drv_train,
+        lane_dir=lane_train,
         size_hw=size_hw,
         transform=get_seg_train_transforms(size_hw),
+        split_file=train_split_file if train_split_file.exists() else None,
+        direct_value=args.direct_id,
+        alternative_value=args.alt_id,
+        lane_bg_value=args.lane_bg_id,
     )
     val_ds = BDDSegmentationDataset(
         images_dir=images_val,
-        drivable_dir=drv_val if drv_val.exists() else None,
-        lane_dir=lane_val if lane_val.exists() else None,
+        drivable_dir=drv_val,
+        lane_dir=lane_val,
         size_hw=size_hw,
         transform=get_seg_val_transforms(size_hw),
+        split_file=val_split_file if val_split_file.exists() else None,
+        direct_value=args.direct_id,
+        alternative_value=args.alt_id,
+        lane_bg_value=args.lane_bg_id,
     )
 
+    if args.evaluate_only:
+        ckpt_to_eval = args.weights or output_weights
+        from models.segmenter import DeepLabV3PlusSegmenter
+
+        seg_wrapper = DeepLabV3PlusSegmenter(weights_path=ckpt_to_eval, device=str(device))
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+        eval_metrics = evaluate_segmenter_bdd_loader(
+            model=seg_wrapper.model,
+            loader=val_loader,
+            device=device,
+            thresholds=seg_wrapper.thresholds,
+        )
+        logger.info("Validation metrics: %s", eval_metrics)
+        return
+
     num_workers = int(seg_cfg.train.get("num_workers", 2))
+    pin_mem = device.type == "cuda"
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True
+        val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_mem
     )
 
     encoder_name = seg_cfg.model.encoder

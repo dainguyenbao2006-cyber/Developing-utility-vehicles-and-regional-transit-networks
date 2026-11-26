@@ -20,6 +20,36 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 
 
+def resolve_bdd_seg_dirs(
+    bdd_root: Path,
+    split: str,
+) -> tuple[Path, Path | None, Path | None]:
+    """Auto-resolve BDD100K image, drivable mask, and lane mask directories across layouts."""
+    img_candidates = [
+        bdd_root / "images" / "100k" / split,
+        bdd_root / "bdd100k" / "images" / "100k" / split,
+        bdd_root / "bdd100k_images_100k" / "bdd100k" / "images" / "100k" / split,
+    ]
+    img_dir = next((p for p in img_candidates if p.exists()), img_candidates[0])
+
+    drv_candidates = [
+        bdd_root / "labels" / "drivable" / "masks" / split,
+        bdd_root / "drivable_maps" / "labels" / split,
+        bdd_root / "bdd100k" / "labels" / "drivable" / "masks" / split,
+        bdd_root / "bdd100k" / "drivable_maps" / "labels" / split,
+    ]
+    drv_dir = next((p for p in drv_candidates if p.exists()), None)
+
+    lane_candidates = [
+        bdd_root / "labels" / "lane" / "masks" / split,
+        bdd_root / "lane" / "labels" / split,
+        bdd_root / "labels" / "lane" / "colormaps" / split,
+        bdd_root / "bdd100k" / "labels" / "lane" / "masks" / split,
+    ]
+    lane_dir = next((p for p in lane_candidates if p.exists()), None)
+    return img_dir, drv_dir, lane_dir
+
+
 class BDDSegmentationDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     """Dataset returning (image_tensor (3, H, W), mask_tensor (3, H, W)) for BDD100K."""
 
