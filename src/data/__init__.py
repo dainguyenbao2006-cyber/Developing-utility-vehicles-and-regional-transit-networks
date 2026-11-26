@@ -8,6 +8,8 @@ from data.converters import (
     create_subset_split,
     encode_bdd_masks_to_3ch,
     extract_cityscapes_road_mask,
+    rasterize_bdd_frame_seg_masks,
+    rasterize_bdd_json_seg_to_dirs,
     read_split_file,
     write_split_file,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "get_seg_train_transforms",
     "get_seg_val_transforms",
     "preprocess_for_segmentation",
+    "rasterize_bdd_frame_seg_masks",
+    "rasterize_bdd_json_seg_to_dirs",
     "read_split_file",
     "write_split_file",
 ]

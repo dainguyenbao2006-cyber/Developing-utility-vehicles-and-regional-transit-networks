@@ -28,6 +28,7 @@ def resolve_bdd_seg_dirs(
     img_candidates = [
         bdd_root / "images" / "100k" / split,
         bdd_root / "bdd100k" / "images" / "100k" / split,
+        bdd_root / "bdd100k" / "bdd100k" / "images" / "100k" / split,
         bdd_root / "bdd100k_images_100k" / "bdd100k" / "images" / "100k" / split,
     ]
     img_dir = next((p for p in img_candidates if p.exists()), img_candidates[0])

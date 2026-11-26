@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -201,3 +202,175 @@ def read_split_file(split_path: Path) -> list[str]:
         for line in split_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _sample_bdd_poly2d(poly: dict[str, Any], steps_per_curve: int = 8) -> np.ndarray | None:
+    """Sample BDD100K poly2d vertices (supporting 'L' lines and 'C' cubic Bezier segments)."""
+    raw_verts = poly.get("vertices")
+    if not isinstance(raw_verts, list) or len(raw_verts) < 2:
+        return None
+
+    pts = np.asarray(raw_verts, dtype=np.float32)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        return None
+
+    types = str(poly.get("types", "L" * len(pts)))
+    closed = bool(poly.get("closed", False))
+    if len(types) != len(pts) or "C" not in types:
+        return np.round(pts).astype(np.int32)
+
+    sampled: list[np.ndarray] = [pts[0]]
+    idx = 1
+    n = len(pts)
+    ts = np.linspace(0.0, 1.0, steps_per_curve + 1, dtype=np.float32)[1:, None]
+
+    while idx < n:
+        if idx + 2 < n and types[idx : idx + 3] == "CCC":
+            p0, p1, p2, p3 = sampled[-1], pts[idx], pts[idx + 1], pts[idx + 2]
+            one_minus_t = 1.0 - ts
+            curve = (
+                (one_minus_t**3) * p0
+                + 3.0 * (one_minus_t**2) * ts * p1
+                + 3.0 * one_minus_t * (ts**2) * p2
+                + (ts**3) * p3
+            )
+            sampled.extend(list(curve))
+            idx += 3
+        else:
+            sampled.append(pts[idx])
+            idx += 1
+
+    if closed and idx == n - 2 and types[-2:] == "CC":
+        p0, p1, p2, p3 = sampled[-1], pts[-2], pts[-1], pts[0]
+        one_minus_t = 1.0 - ts
+        curve = (
+            (one_minus_t**3) * p0
+            + 3.0 * (one_minus_t**2) * ts * p1
+            + 3.0 * one_minus_t * (ts**2) * p2
+            + (ts**3) * p3
+        )
+        sampled.extend(list(curve))
+
+    return np.round(np.asarray(sampled, dtype=np.float32)).astype(np.int32)
+
+
+def rasterize_bdd_frame_seg_masks(
+    labels: list[dict[str, Any]],
+    img_width: int = 1280,
+    img_height: int = 720,
+    lane_thickness: int = 4,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rasterize BDD100K JSON `drivable area` and `lane` poly2d labels into 2D ID masks.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        - drivable_mask: uint8 (H, W) with 0=direct, 1=alternative, 2=background
+        - lane_mask: uint8 (H, W) with 1=lane_marking, 255=background
+    """
+    drivable_mask = np.full((img_height, img_width), 2, dtype=np.uint8)
+    lane_mask = np.full((img_height, img_width), 255, dtype=np.uint8)
+
+    for label in labels:
+        if not isinstance(label, dict):
+            continue
+        cat = str(label.get("category", "")).strip().lower()
+        polys = label.get("poly2d")
+        if not isinstance(polys, list):
+            continue
+
+        if cat in {"drivable area", "area/drivable", "area/alternative"}:
+            attrs = label.get("attributes") or {}
+            area_type = str(attrs.get("areaType", "direct")).strip().lower()
+            if cat == "area/alternative" or area_type == "alternative":
+                pix_id = 1
+            elif area_type == "direct" or cat == "area/drivable":
+                pix_id = 0
+            else:
+                continue
+
+            for poly in polys:
+                if not isinstance(poly, dict):
+                    continue
+                pts = _sample_bdd_poly2d(poly)
+                if pts is not None and len(pts) >= 3:
+                    cv2.fillPoly(drivable_mask, [pts.reshape(-1, 1, 2)], color=pix_id)
+
+        elif cat == "lane" or cat.startswith("lane/"):
+            for poly in polys:
+                if not isinstance(poly, dict):
+                    continue
+                pts = _sample_bdd_poly2d(poly)
+                if pts is not None and len(pts) >= 2:
+                    closed = bool(poly.get("closed", False))
+                    cv2.polylines(
+                        lane_mask,
+                        [pts.reshape(-1, 1, 2)],
+                        isClosed=closed,
+                        color=1,
+                        thickness=lane_thickness,
+                    )
+
+    return drivable_mask, lane_mask
+
+
+def rasterize_bdd_json_seg_to_dirs(
+    json_path: Path,
+    images_dir: Path,
+    drivable_out_dir: Path,
+    lane_out_dir: Path,
+    allowed_stems: set[str] | None = None,
+    default_size_wh: tuple[int, int] = (1280, 720),
+) -> dict[str, int]:
+    """Generate PNG drivable and lane masks from BDD100K JSON poly2d annotations."""
+    if not json_path.exists():
+        raise FileNotFoundError(f"BDD100K JSON not found: {json_path}")
+
+    drivable_out_dir.mkdir(parents=True, exist_ok=True)
+    lane_out_dir.mkdir(parents=True, exist_ok=True)
+
+    with json_path.open("r", encoding="utf-8") as handle:
+        frames = _extract_bdd_frames(json.load(handle))
+
+    written = 0
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        image_name = frame.get("name")
+        if not isinstance(image_name, str) or not image_name:
+            continue
+
+        stem = Path(image_name).stem
+        if allowed_stems is not None and stem not in allowed_stems:
+            continue
+
+        drv_path = drivable_out_dir / f"{stem}.png"
+        ln_path = lane_out_dir / f"{stem}.png"
+        if drv_path.exists() and ln_path.exists():
+            written += 1
+            continue
+
+        img_path = images_dir / image_name
+        if img_path.exists():
+            with Image.open(img_path) as img:
+                img_w, img_h = img.size
+        else:
+            img_w, img_h = default_size_wh
+
+        drv_mask, ln_mask = rasterize_bdd_frame_seg_masks(
+            labels=frame.get("labels") or [],
+            img_width=img_w,
+            img_height=img_h,
+        )
+        cv2.imwrite(str(drv_path), drv_mask)
+        cv2.imwrite(str(ln_path), ln_mask)
+        written += 1
+
+    logger.info(
+        "Rasterized %d segmentation mask pairs from %s -> (%s, %s)",
+        written,
+        json_path,
+        drivable_out_dir,
+        lane_out_dir,
+    )
+    return {"masks_written": written}

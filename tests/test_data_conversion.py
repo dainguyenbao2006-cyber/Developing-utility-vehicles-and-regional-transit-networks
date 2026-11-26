@@ -18,6 +18,7 @@ from data.converters import (
     create_subset_split,
     encode_bdd_masks_to_3ch,
     extract_cityscapes_road_mask,
+    rasterize_bdd_frame_seg_masks,
     read_split_file,
     write_split_file,
 )
@@ -190,3 +191,45 @@ def test_inspect_bdd_on_synthetic_root(tmp_path: Path) -> None:
     assert report["image_counts"]["images/100k/val"] == 1
     assert report["json_reports"][0]["categories"]["car"] == 1
     assert report["mask_reports"][0]["unique_gray_values"] == [0, 1, 2]
+
+
+def test_rasterize_bdd_frame_seg_masks_from_poly2d() -> None:
+    labels = [
+        {
+            "category": "drivable area",
+            "attributes": {"areaType": "direct"},
+            "poly2d": [
+                {
+                    "vertices": [[20, 40], [60, 40], [60, 80], [20, 80]],
+                    "types": "LLLL",
+                    "closed": True,
+                }
+            ],
+        },
+        {
+            "category": "drivable area",
+            "attributes": {"areaType": "alternative"},
+            "poly2d": [
+                {
+                    "vertices": [[0, 40], [18, 40], [18, 80], [0, 80]],
+                    "types": "LLLL",
+                    "closed": True,
+                }
+            ],
+        },
+        {
+            "category": "lane",
+            "poly2d": [
+                {
+                    "vertices": [[19, 40], [19, 50], [19, 70], [19, 80]],
+                    "types": "LCCC",
+                    "closed": False,
+                }
+            ],
+        },
+    ]
+    drv, lane = rasterize_bdd_frame_seg_masks(labels, img_width=100, img_height=100)
+    encoded = encode_bdd_masks_to_3ch(drv, lane)
+    assert encoded[0, 60, 40] == 1  # direct lane inside polygon
+    assert encoded[1, 60, 10] == 1  # alternative lane inside polygon
+    assert encoded[2, 60, 19] == 1  # Bezier lane curve rasterized

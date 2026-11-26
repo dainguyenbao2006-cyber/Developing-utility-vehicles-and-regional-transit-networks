@@ -14,9 +14,11 @@ _SRC_DIR = _PROJECT_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+from data.bdd_dataset import resolve_bdd_seg_dirs  # noqa: E402
 from data.converters import (  # noqa: E402
     convert_bdd_json_to_yolo_dir,
     create_subset_split,
+    rasterize_bdd_json_seg_to_dirs,
     write_split_file,
 )
 from utils.config import load_project_configs  # noqa: E402
@@ -34,6 +36,7 @@ def resolve_bdd_images_base(bdd_root: Path, override_subpath: str | None = None)
     candidates = [
         bdd_root / "images" / "100k",
         bdd_root / "bdd100k" / "images" / "100k",
+        bdd_root / "bdd100k" / "bdd100k" / "images" / "100k",
         bdd_root / "bdd100k_images_100k" / "bdd100k" / "images" / "100k",
     ]
     for candidate in candidates:
@@ -53,6 +56,7 @@ def find_split_detection_json(
         bdd_root / "labels",
         bdd_root / "bdd100k" / "labels" / "det_20",
         bdd_root / "bdd100k" / "labels",
+        bdd_root / "bdd100k_labels_release" / "bdd100k" / "labels",
         bdd_root,
     ]
     for root in search_roots:
@@ -157,6 +161,17 @@ def main() -> None:
                 labels_out_dir=yolo_lbl_dir,
                 allowed_stems=set(chosen_stems),
             )
+            _, existing_drv, existing_lane = resolve_bdd_seg_dirs(bdd_root, split_name)
+            if existing_drv is None or existing_lane is None:
+                drv_out = bdd_root / "labels" / "drivable" / "masks" / split_name
+                lane_out = bdd_root / "labels" / "lane" / "masks" / split_name
+                rasterize_bdd_json_seg_to_dirs(
+                    json_path=det_json,
+                    images_dir=split_img_dir,
+                    drivable_out_dir=drv_out,
+                    lane_out_dir=lane_out,
+                    allowed_stems=set(chosen_stems),
+                )
         else:
             logger.warning(
                 "No detection JSON found for '%s'; pass --labels-dir if stored separately.",
